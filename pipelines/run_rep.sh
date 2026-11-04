@@ -6,13 +6,12 @@ set -euo pipefail
 SEED=$1; W=$(realpath -m "$2"); N=${3:-400}; J=${4:-40}
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 DEPTH=60; RL=150; K=31; PLOIDY=4
-export MAMBA_ROOT_PREFIX=$HOME/micromamba
-GW="$HOME/bin/micromamba run -n gw"
-KM="$HOME/bin/micromamba run -n kmeriaenv"
+ENVS=${MAMBA_ROOT_PREFIX:-$HOME/micromamba}/envs
 KMERIA=$REPO/../tools/KMERIA   # repo is cloned next to tools/ on the VM
 [ -d "$KMERIA" ] || KMERIA=$HOME/kmeria-demo/tools/KMERIA
-export LD_LIBRARY_PATH=$KMERIA/lib:${LD_LIBRARY_PATH:-}
-export PATH=$KMERIA/bin:$KMERIA/bimbamAsso:$KMERIA/external_tools:$PATH
+# call env binaries directly: `micromamba run` takes a global lock and serialises parallel jobs
+GW="env PATH=$ENVS/gw/bin:$PATH"
+KM="env LD_LIBRARY_PATH=$KMERIA/lib:$ENVS/kmeriaenv/lib PATH=$KMERIA/bin:$KMERIA/bimbamAsso:$PATH"
 mkdir -p "$W"/{sim,reads,bam,gvcf2,gvcf4,vcf,gwas,kmer,logs}
 T() { /usr/bin/time -f "$1\t%e\t%M" -a -o "$W/logs/time.tsv" "${@:2}"; }  # stage wall-s, maxRSS-KB
 done_() { [ -f "$W/.$1.done" ]; }; mark() { touch "$W/.$1.done"; }
@@ -63,8 +62,12 @@ if ! done_ kmatrix; then log "kctm + filter + m2b"
   for s in "${S[@]}"; do printf '%s\t%s\t%s\n' "$s" "$KD" "$PLOIDY"; done > "$W/kmer/depth.txt"
   rm -rf "$W/kmer/mat" "$W/kmer/flt" "$W/kmer/bimbam"; mkdir -p "$W/kmer/mat"
   T kctm $KM kmeria kctm -i "$W/kmer/db.list" -o "$W/kmer/mat/matrix" -j 16 > "$W/logs/kctm.log" 2>&1
-  T kfilter $KM kmeria filter -i "$W/kmer/mat" -o "$W/kmer/flt" -d "$W/kmer/depth.txt" -p $PLOIDY -t 16 --output-format text > "$W/logs/filter.log" 2>&1
-  T m2b $KM kmeria m2b --in "$W/kmer/flt" --out "$W/kmer/bimbam" --threads 16 > "$W/logs/m2b.log" 2>&1
+  # official path (as in kmeria_wrapper.pl): compressed filter output -> m2b
+  T kfilter $KM kmeria filter -i "$W/kmer/mat" -o "$W/kmer/flt_c" -d "$W/kmer/depth.txt" -p $PLOIDY -t 16 --output-format compressed > "$W/logs/filter.log" 2>&1
+  T m2b $KM kmeria m2b --in "$W/kmer/flt_c" --out "$W/kmer/bimbam" --threads 16 > "$W/logs/m2b.log" 2>&1
+  # text copy of the same filtered copy numbers, only used to build the presence/absence control.
+  # NOTE (v2.0.4): text output writes k-mer strings reversed; flt_to_pa.py reverses them back.
+  T kfilter_txt $KM kmeria filter -i "$W/kmer/mat" -o "$W/kmer/flt" -d "$W/kmer/depth.txt" -p $PLOIDY -t 16 --output-format text >> "$W/logs/filter.log" 2>&1
   mark kmatrix; fi
 if ! done_ kasso; then log "kinship + association (dosage and presence/absence)"
   T kasso bash "$REPO/pipelines/kmer_asso.sh" "$W" "$KM" "$GW" "$REPO"
