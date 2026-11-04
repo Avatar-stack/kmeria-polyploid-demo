@@ -22,6 +22,9 @@ QTLS = [
     ("P95",  "dosage",   "chr1",   710_000, 1_500_000, 0.95),
     ("P98",  "dosage",   "chr1",   910_000, 1_650_000, 0.98),
     ("P995", "dosage",   "chr1", 1_110_000, 1_800_000, 0.995),
+    # amendment 1 (after the n=20 smoke test, before any full replicate): two more identity levels
+    ("P999", "dosage",   "chr1", 1_310_000, 1_950_000, 0.999),
+    ("P100", "dosage",   "chr1", 1_410_000,    50_000, 1.0),   # identical duplicated segment
 ]
 
 
@@ -83,10 +86,10 @@ def main():
     alt = np.array([r[3] for r in rows], dtype=np.uint8)
     kind = np.array([r[4] for r in rows])
 
-    target = {"U": 0.5, "P95": 0.5, "P98": 0.5, "P995": 0.5, "CTRL": 0.1}
+    target = {"CTRL": 0.1}  # every other causal site: founder alt frequency 0.5
     fa = np.zeros((S, F), dtype=bool)  # founder carries alt
     for i, r in enumerate(rows):
-        f = target[r[5]] if r[4] == "causal" else np.clip(rng.beta(0.4, 0.4), 2 / F, 1 - 2 / F)
+        f = target.get(r[5], 0.5) if r[4] == "causal" else np.clip(rng.beta(0.4, 0.4), 2 / F, 1 - 2 / F)
         fa[i, rng.choice(F, size=int(round(f * F)), replace=False)] = True
 
     # 3. individuals: each homolog of each chromosome is a mosaic of founder blocks

@@ -37,11 +37,15 @@ for PL in 2 4; do
   if ! done_ hc$PL; then log "HaplotypeCaller ploidy=$PL"
     T hc$PL bash -c "printf '%s\n' ${S[*]} | xargs -P $J -I{} $GW gatk --java-options -Xmx2g HaplotypeCaller -R $W/sim/ref.fa -I $W/bam/{}.bam -ploidy $PL -ERC GVCF -O $W/gvcf$PL/{}.g.vcf.gz --native-pair-hmm-threads 1 >/dev/null 2>&1"
     mark hc$PL; fi
-  if ! done_ gt$PL; then log "joint genotyping ploidy=$PL"
+  if ! done_ gt$PL; then log "joint genotyping ploidy=$PL (scattered over 100 kb intervals)"
     printf '%s\n' "${S[@]}" | awk -v d="$W/gvcf$PL" '{print $1"\t"d"/"$1".g.vcf.gz"}' > "$W/vcf/map$PL.txt"
-    rm -rf "$W/vcf/db$PL"
-    T gt$PL bash -c "$GW gatk --java-options -Xmx16g GenomicsDBImport --sample-name-map $W/vcf/map$PL.txt --genomicsdb-workspace-path $W/vcf/db$PL -L chr1 -L chr2 --batch-size 50 --reader-threads 4 >/dev/null 2>&1 && $GW gatk --java-options -Xmx16g GenotypeGVCFs -R $W/sim/ref.fa -V gendb://$W/vcf/db$PL -O $W/vcf/raw$PL.vcf.gz >/dev/null 2>&1"
+    rm -rf "$W/vcf/sc$PL"; mkdir -p "$W/vcf/sc$PL"
+    awk '{for(s=1;s<=$2;s+=100000){e=s+99999; if(e>$2)e=$2; printf "%s:%d-%d\n",$1,s,e}}' "$W/sim/ref.fa.fai" > "$W/vcf/intervals.txt"
+    T gt$PL bash -c "nl -nrz -w3 $W/vcf/intervals.txt | xargs -P $((J/2)) -n2 bash -c '$GW gatk --java-options -Xmx3g GenomicsDBImport --sample-name-map $W/vcf/map$PL.txt --genomicsdb-workspace-path $W/vcf/sc$PL/db\$0 -L \$1 --batch-size 100 >/dev/null 2>&1 && $GW gatk --java-options -Xmx3g GenotypeGVCFs -R $W/sim/ref.fa -V gendb://$W/vcf/sc$PL/db\$0 -L \$1 -O $W/vcf/sc$PL/\$0.vcf.gz >/dev/null 2>&1'"
+    [ "$(ls "$W"/vcf/sc$PL/*.vcf.gz | wc -l)" -eq "$(wc -l < "$W/vcf/intervals.txt")" ] || { log "scatter ploidy=$PL incomplete"; exit 1; }
+    $GW bcftools concat -Oz -o "$W/vcf/raw$PL.vcf.gz" $(ls "$W"/vcf/sc$PL/*.vcf.gz | sort)
     $GW bcftools view -m2 -M2 -v snps -i 'QUAL>=30' "$W/vcf/raw$PL.vcf.gz" -Oz -o "$W/vcf/snp$PL.vcf.gz"
+    rm -rf "$W/vcf/sc$PL"
     mark gt$PL; fi
 done
 
@@ -75,5 +79,12 @@ if ! done_ kasso; then log "kinship + association (dosage and presence/absence)"
 
 if ! done_ eval; then log evaluate
   T eval $GW python "$REPO/eval/evaluate.py" "$W" > "$W/logs/eval.log"
+  $GW python "$REPO/eval/check_dosage.py" "$W" > "$W/eval/check_kmer_dosage.txt"
+  $GW python "$REPO/eval/check_snp_calls.py" "$W" > "$W/eval/check_snp_calls.txt"
   mark eval; fi
+# keep results, drop the bulky intermediates (~80 GB per replicate at n = 400)
+if [ "${KEEP:-0}" != 1 ]; then
+  rm -rf "$W/reads" "$W/bam" "$W/gvcf2" "$W/gvcf4" "$W/kmer"/*.bin "$W/kmer/mat" "$W/kmer/flt" "$W/kmer/flt_c" \
+         "$W/kmer/bimbam" "$W/kmer/pa" "$W/kmer/asso"/*.ps "$W/sim/founders.fa" "$W/sim/mosaic.pkl"
+fi
 log finished

@@ -53,3 +53,23 @@ Correlation with true dosage at founder freq 0.5: diploid GT 0.71, presence/abse
 4. Runtime: GATK ploidy 4 genotyping is the most expensive step; kmeria is cheaper end-to-end.
 
 Any outcome that differs from 1–4 is reported as observed.
+
+---
+
+## Amendment 1 (2026-11-04, after the n = 20 smoke test, before any full replicate)
+**What the smoke test showed** (n = 20, seed 101, `eval/check_snp_calls.py`): GATK `-ploidy 4` genotypes at the
+causal sites correlated with true dosage at r = 1.000 (U, P95, P98) and r = 0.975 (P995); only the site QUAL
+dropped (~5.5k vs ~15k). With 2×150 bp reads and 400 bp inserts a fragment spans ~700 bp, so 0.5 % divergence
+still leaves ~3–4 distinguishing sites per fragment. Prediction 2 as written is therefore likely to fail at the
+planned identity levels.
+
+**Change**: two traits added, everything else unchanged (original predictions 1–4 stand and will be scored):
+
+| trait | QTL model | founder alt freq | where |
+|---|---|---|---|
+| P999 | additive dosage | 0.5 | paralogous copy at 99.9 % identity (20 differences per 20 kb) |
+| P100 | additive dosage | 0.5 | paralogous copy 100 % identical (a recent segmental duplication) |
+
+**Additional predictions**: gwaspoly loses power at P999 and largely fails at P100 (reads from two identical copies
+get MAPQ ≈ 0 and are ignored by HaplotypeCaller); kmeria detects both (the causal alt allele exists on one copy only,
+so its k-mers stay unique). Replicates: seeds 1–5 first; 6–10 only if needed.
