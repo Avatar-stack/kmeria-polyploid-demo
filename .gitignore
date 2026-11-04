@@ -1,0 +1,7 @@
+*.fq.gz
+*.bam
+*.bam.bai
+*.g.vcf.gz
+/work/
+__pycache__/
+.claude/
