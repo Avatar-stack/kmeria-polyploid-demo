@@ -65,14 +65,20 @@ def build_index():
 def place(kmers, idx):
     c, p, refset = idx
     fwd, rc = str_codes(kmers)
-    first = np.full(len(kmers), -1, np.int64); npos = np.zeros(len(kmers), np.int32)
+    # min and max position over both orientations: a k-mer shared by two paralogous copies
+    # is "near" a locus if either copy is (p is sorted by position within each code)
+    first = np.full(len(kmers), -1, np.int64); last = np.full(len(kmers), -1, np.int64)
+    npos = np.zeros(len(kmers), np.int32)
     for q in (fwd, rc):
         lo = np.searchsorted(c, q, "left"); hi = np.searchsorted(c, q, "right")
         has = hi > lo
-        first[has & (first < 0)] = p[lo[has & (first < 0)]]
+        pmin = np.where(has, p[np.minimum(lo, len(p) - 1)].astype(np.int64), -1)
+        pmax = np.where(has, p[np.maximum(hi - 1, 0)].astype(np.int64), -1)
+        first = np.where(has & ((first < 0) | (pmin < first)), pmin, first)
+        last = np.maximum(last, pmax)
         npos += (hi - lo).astype(np.int32)
     in_ref = np.isin(fwd, refset) | np.isin(rc, refset)
-    return first, npos, in_ref
+    return first, last, npos, in_ref
 
 
 def load_p(path):
@@ -104,15 +110,17 @@ for q in truth["qtls"]:
         M = len(ps) if kind == "snp" else len(ps) / K
         thr = ALPHA / M
         if kind == "snp":
-            pos = np.array([CH[i.split(":")[0]] + int(i.split(":")[1]) for i in ids]); npos = np.ones(len(ids), int)
-            in_ref = np.ones(len(ids), bool)
+            pos = np.array([CH[i.split(":")[0]] + int(i.split(":")[1]) for i in ids]); last = pos
+            npos = np.ones(len(ids), int); in_ref = np.ones(len(ids), bool)
         else:
             if idx is None:
                 idx = build_index()
-            pos, npos, in_ref = place(ids, idx)
+            pos, last, npos, in_ref = place(ids, idx)
         sig = ps < thr; placed = pos >= 0
-        near = lambda x: placed & (np.abs(pos - x) <= WIN)
-        tw_m, gw_m = near(tw), (near(gw) if gw is not None else np.zeros(len(ps), bool))
+        near = lambda x: placed & ((np.abs(pos - x) <= WIN) | (np.abs(last - x) <= WIN))
+        tw_m = near(tw)
+        # ghost = signal only at the paralogous copy; a k-mer present in both copies counts as true
+        gw_m = (near(gw) & ~tw_m) if gw is not None else np.zeros(len(ps), bool)
         on1 = placed & (pos < CH["chr2"])
         fp = sig & on1 & ~tw_m & ~gw_m
         fp_bins = len(np.unique(pos[fp] // (2 * WIN)))
